@@ -2,15 +2,11 @@ package srv
 
 import (
 	"database/sql"
-	"fmt"
 	"html/template"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"time"
 
@@ -23,22 +19,18 @@ type Server struct {
 	Hostname     string
 	TemplatesDir string
 	StaticDir    string
+	templates    *template.Template
 }
 
-type pageData struct {
-	Hostname   string
-	Now        string
-	UserEmail  string
-	VisitCount int64
-	LoginURL   string
-	LogoutURL  string
-	Headers    []headerEntry
-}
-
-type headerEntry struct {
-	Name       string
-	Values     []string
-	AddedByExe bool
+type PostView struct {
+	ID          int64
+	Slug        string
+	Title       string
+	Content     string
+	Excerpt     string
+	ContentHTML template.HTML
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 func New(dbPath, hostname string) (*Server, error) {
@@ -52,136 +44,159 @@ func New(dbPath, hostname string) (*Server, error) {
 	if err := srv.setUpDatabase(dbPath); err != nil {
 		return nil, err
 	}
+	if err := srv.loadTemplates(); err != nil {
+		return nil, err
+	}
 	return srv, nil
 }
 
-func (s *Server) HandleRoot(w http.ResponseWriter, r *http.Request) {
-	// Identity from proxy headers (if present)
-	// UserID is stable; email is useful.
-	userID := strings.TrimSpace(r.Header.Get("X-ExeDev-UserID"))
-	userEmail := strings.TrimSpace(r.Header.Get("X-ExeDev-Email"))
-	now := time.Now()
-
-	var count int64
-	if userID != "" && s.DB != nil {
-		q := dbgen.New(s.DB)
-		shouldRecordView := r.Method == http.MethodGet
-		if shouldRecordView {
-			// Best effort
-			err := q.UpsertVisitor(r.Context(), dbgen.UpsertVisitorParams{
-				ID:        userID,
-				CreatedAt: now,
-				LastSeen:  now,
-			})
-			if err != nil {
-				slog.Warn("upsert visitor", "error", err, "user_id", userID)
-			}
-		}
-		if v, err := q.VisitorWithID(r.Context(), userID); err == nil {
-			count = v.ViewCount
-		}
-	}
-
-	data := pageData{
-		Hostname:   s.Hostname,
-		Now:        now.Format(time.RFC3339),
-		UserEmail:  userEmail,
-		VisitCount: count,
-		LoginURL:   loginURLForRequest(r),
-		LogoutURL:  "/__exe.dev/logout",
-		Headers:    buildHeaderEntries(r),
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.renderTemplate(w, "welcome.html", data); err != nil {
-		slog.Warn("render template", "url", r.URL.Path, "error", err)
-	}
-}
-
-func loginURLForRequest(r *http.Request) string {
-	path := r.URL.RequestURI()
-	v := url.Values{}
-	v.Set("redirect", path)
-	return "/__exe.dev/login?" + v.Encode()
-}
-
-func (s *Server) renderTemplate(w http.ResponseWriter, name string, data any) error {
-	path := filepath.Join(s.TemplatesDir, name)
-	tmpl, err := template.ParseFiles(path)
+func (s *Server) loadTemplates() error {
+	tmpl, err := template.ParseGlob(filepath.Join(s.TemplatesDir, "*.html"))
 	if err != nil {
-		return fmt.Errorf("parse template %q: %w", name, err)
+		return err
 	}
-	if err := tmpl.Execute(w, data); err != nil {
-		return fmt.Errorf("execute template %q: %w", name, err)
-	}
+	s.templates = tmpl
 	return nil
 }
 
-func mainDomainFromHost(h string) string {
-	host, port, err := net.SplitHostPort(h)
-	if err != nil {
-		host = strings.TrimSpace(h)
+func (s *Server) render(w http.ResponseWriter, name string, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, name, data); err != nil {
+		slog.Error("render template", "name", name, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
-	if port != "" {
-		port = ":" + port
-	}
-	// Check for exe.cloud-based domains (dev mode)
-	if strings.HasSuffix(host, ".exe.cloud") || host == "exe.cloud" {
-		return "exe.cloud" + port
-	}
-	// Check for exe.dev-based domains (production)
-	if strings.HasSuffix(host, ".exe.dev") || host == "exe.dev" {
-		return "exe.dev"
-	}
-	// Return as-is for custom domains
-	return host
 }
 
-// SetupDatabase initializes the database connection and runs migrations
+func (s *Server) HandleHome(w http.ResponseWriter, r *http.Request) {
+	q := dbgen.New(s.DB)
+	dbPosts, err := q.GetPublishedPosts(r.Context())
+	if err != nil {
+		slog.Error("get posts", "error", err)
+	}
+
+	posts := make([]PostView, 0, len(dbPosts))
+	for _, p := range dbPosts {
+		posts = append(posts, PostView{
+			ID:        p.ID,
+			Slug:      p.Slug,
+			Title:     p.Title,
+			Excerpt:   excerpt(p.Content, 200),
+			CreatedAt: p.CreatedAt,
+		})
+	}
+
+	s.render(w, "base.html", map[string]any{
+		"Posts": posts,
+		"Year":  time.Now().Year(),
+		"Page":  "home",
+	})
+}
+
+func (s *Server) HandlePost(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	q := dbgen.New(s.DB)
+	p, err := q.GetPostBySlug(r.Context(), slug)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if p.Published == 0 {
+		http.NotFound(w, r)
+		return
+	}
+
+	post := PostView{
+		ID:          p.ID,
+		Slug:        p.Slug,
+		Title:       p.Title,
+		Content:     p.Content,
+		ContentHTML: renderContent(p.Content),
+		CreatedAt:   p.CreatedAt,
+		UpdatedAt:   p.UpdatedAt,
+	}
+
+	s.render(w, "base.html", map[string]any{
+		"Post": post,
+		"Year": time.Now().Year(),
+		"Page": "post",
+	})
+}
+
+func (s *Server) HandleArchive(w http.ResponseWriter, r *http.Request) {
+	q := dbgen.New(s.DB)
+	dbPosts, err := q.GetPublishedPosts(r.Context())
+	if err != nil {
+		slog.Error("get posts", "error", err)
+	}
+
+	posts := make([]PostView, 0, len(dbPosts))
+	for _, p := range dbPosts {
+		posts = append(posts, PostView{
+			Slug:      p.Slug,
+			Title:     p.Title,
+			CreatedAt: p.CreatedAt,
+		})
+	}
+
+	s.render(w, "base.html", map[string]any{
+		"Posts": posts,
+		"Year":  time.Now().Year(),
+		"Page":  "archive",
+	})
+}
+
 func (s *Server) setUpDatabase(dbPath string) error {
 	wdb, err := db.Open(dbPath)
 	if err != nil {
-		return fmt.Errorf("failed to open db: %w", err)
+		return err
 	}
 	s.DB = wdb
 	if err := db.RunMigrations(wdb); err != nil {
-		return fmt.Errorf("failed to run migrations: %w", err)
+		return err
 	}
 	return nil
 }
 
-// Serve starts the HTTP server with the configured routes
 func (s *Server) Serve(addr string) error {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", s.HandleRoot)
+	mux.HandleFunc("GET /{$}", s.HandleHome)
+	mux.HandleFunc("GET /post/{slug}", s.HandlePost)
+	mux.HandleFunc("GET /archive", s.HandleArchive)
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(s.StaticDir))))
 	slog.Info("starting server", "addr", addr)
 	return http.ListenAndServe(addr, mux)
 }
 
-func buildHeaderEntries(r *http.Request) []headerEntry {
-	if r == nil {
-		return nil
-	}
+// Helper functions
 
-	headers := make([]headerEntry, 0, len(r.Header)+1)
-	for name, values := range r.Header {
-		lower := strings.ToLower(name)
-		headers = append(headers, headerEntry{
-			Name:       name,
-			Values:     values,
-			AddedByExe: strings.HasPrefix(lower, "x-exedev-") || strings.HasPrefix(lower, "x-forwarded-"),
-		})
+func excerpt(content string, maxLen int) string {
+	// Strip any HTML-like content for excerpt
+	content = strings.TrimSpace(content)
+	if len(content) <= maxLen {
+		return content
 	}
-	if r.Host != "" {
-		headers = append(headers, headerEntry{
-			Name:   "Host",
-			Values: []string{r.Host},
-		})
+	// Find last space before maxLen
+	truncated := content[:maxLen]
+	if idx := strings.LastIndex(truncated, " "); idx > 0 {
+		truncated = truncated[:idx]
 	}
+	return truncated + "..."
+}
 
-	sort.Slice(headers, func(i, j int) bool {
-		return strings.ToLower(headers[i].Name) < strings.ToLower(headers[j].Name)
-	})
-	return headers
+func renderContent(content string) template.HTML {
+	// Simple paragraph rendering - splits on double newlines
+	paragraphs := strings.Split(strings.TrimSpace(content), "\n\n")
+	var sb strings.Builder
+	for _, p := range paragraphs {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		// Replace single newlines with <br>
+		p = strings.ReplaceAll(p, "\n", "<br>")
+		sb.WriteString("<p>")
+		sb.WriteString(template.HTMLEscapeString(p))
+		sb.WriteString("</p>\n")
+	}
+	return template.HTML(sb.String())
 }

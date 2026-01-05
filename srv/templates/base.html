@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{if .Post}}{{.Post.Title}} - {{end}}Citizen of the World</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="site-title">Citizen of the World</a>
+            <div class="nav-links">
+                <a href="/">Home</a>
+                <a href="/archive">Archive</a>
+            </div>
+        </nav>
+    </header>
+    <main>
+        {{if eq .Page "home"}}
+        <article class="intro">
+            <h1>Welcome</h1>
+            <p class="tagline">Thoughts and stories from everywhere and nowhere.</p>
+        </article>
+        <section class="posts">
+            <h2>Recent Posts</h2>
+            {{if .Posts}}
+            {{range .Posts}}
+            <article class="post-preview">
+                <h3><a href="/post/{{.Slug}}">{{.Title}}</a></h3>
+                <time datetime="{{.CreatedAt.Format "2006-01-02"}}">{{.CreatedAt.Format "January 2, 2006"}}</time>
+                <p>{{.Excerpt}}</p>
+                <a href="/post/{{.Slug}}" class="read-more">Read more →</a>
+            </article>
+            {{end}}
+            {{else}}
+            <p class="no-posts">No posts yet. Check back soon!</p>
+            {{end}}
+        </section>
+        {{else if eq .Page "post"}}
+        <article class="post">
+            <header class="post-header">
+                <h1>{{.Post.Title}}</h1>
+                <time datetime="{{.Post.CreatedAt.Format "2006-01-02"}}">{{.Post.CreatedAt.Format "January 2, 2006"}}</time>
+            </header>
+            <div class="post-content">
+                {{.Post.ContentHTML}}
+            </div>
+            <footer class="post-footer">
+                <a href="/">← Back to home</a>
+            </footer>
+        </article>
+        {{else if eq .Page "archive"}}
+        <section class="archive">
+            <h1>Archive</h1>
+            {{if .Posts}}
+            <ul class="post-list">
+            {{range .Posts}}
+                <li>
+                    <time datetime="{{.CreatedAt.Format "2006-01-02"}}">{{.CreatedAt.Format "Jan 2, 2006"}}</time>
+                    <a href="/post/{{.Slug}}">{{.Title}}</a>
+                </li>
+            {{end}}
+            </ul>
+            {{else}}
+            <p class="no-posts">No posts yet.</p>
+            {{end}}
+        </section>
+        {{end}}
+    </main>
+    <footer>
+        <p>&copy; {{.Year}} Citizen of the World</p>
+    </footer>
+</body>
+</html>

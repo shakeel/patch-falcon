@@ -14,6 +14,16 @@ type Migration struct {
 	ExecutedAt      time.Time `json:"executed_at"`
 }
 
+type Post struct {
+	ID        int64     `json:"id"`
+	Slug      string    `json:"slug"`
+	Title     string    `json:"title"`
+	Content   string    `json:"content"`
+	Published int64     `json:"published"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type Visitor struct {
 	ID        string    `json:"id"`
 	ViewCount int64     `json:"view_count"`
