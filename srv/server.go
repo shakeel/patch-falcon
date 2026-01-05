@@ -29,6 +29,7 @@ type PostView struct {
 	Content     string
 	Excerpt     string
 	ContentHTML template.HTML
+	Published   bool
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -162,6 +163,15 @@ func (s *Server) Serve(addr string) error {
 	mux.HandleFunc("GET /{$}", s.HandleHome)
 	mux.HandleFunc("GET /post/{slug}", s.HandlePost)
 	mux.HandleFunc("GET /archive", s.HandleArchive)
+	
+	// Admin routes
+	mux.HandleFunc("GET /admin", s.requireAdmin(s.HandleAdminList))
+	mux.HandleFunc("GET /admin/new", s.requireAdmin(s.HandleAdminNew))
+	mux.HandleFunc("POST /admin/new", s.requireAdmin(s.HandleAdminCreate))
+	mux.HandleFunc("GET /admin/edit/{id}", s.requireAdmin(s.HandleAdminEdit))
+	mux.HandleFunc("POST /admin/edit/{id}", s.requireAdmin(s.HandleAdminUpdate))
+	mux.HandleFunc("POST /admin/delete/{id}", s.requireAdmin(s.HandleAdminDelete))
+	
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(s.StaticDir))))
 	slog.Info("starting server", "addr", addr)
 	return http.ListenAndServe(addr, mux)

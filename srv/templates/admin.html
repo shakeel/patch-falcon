@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Citizen of the World</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/" class="site-title">Citizen of the World</a>
+            <div class="nav-links">
+                <a href="/">Home</a>
+                <a href="/admin" class="active">Admin</a>
+            </div>
+        </nav>
+    </header>
+    <main>
+        <div class="admin-header">
+            <h1>Posts</h1>
+            <a href="/admin/new" class="btn btn-primary">New Post</a>
+        </div>
+        
+        {{if .Posts}}
+        <table class="posts-table">
+            <thead>
+                <tr>
+                    <th>Title</th>
+                    <th>Slug</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+            {{range .Posts}}
+                <tr>
+                    <td><a href="/admin/edit/{{.ID}}">{{.Title}}</a></td>
+                    <td><code>{{.Slug}}</code></td>
+                    <td>
+                        {{if .Published}}
+                        <span class="status status-published">Published</span>
+                        {{else}}
+                        <span class="status status-draft">Draft</span>
+                        {{end}}
+                    </td>
+                    <td>{{.CreatedAt.Format "Jan 2, 2006"}}</td>
+                    <td class="actions">
+                        <a href="/post/{{.Slug}}" class="btn btn-small">View</a>
+                        <a href="/admin/edit/{{.ID}}" class="btn btn-small">Edit</a>
+                        <form method="POST" action="/admin/delete/{{.ID}}" class="inline" onsubmit="return confirm('Delete this post?')">
+                            <button type="submit" class="btn btn-small btn-danger">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+            {{end}}
+            </tbody>
+        </table>
+        {{else}}
+        <p class="no-posts">No posts yet. <a href="/admin/new">Create your first post</a>.</p>
+        {{end}}
+    </main>
+    <footer>
+        <p>&copy; {{.Year}} Citizen of the World</p>
+    </footer>
+</body>
+</html>
