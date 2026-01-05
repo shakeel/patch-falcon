@@ -184,19 +184,138 @@ func excerpt(content string, maxLen int) string {
 }
 
 func renderContent(content string) template.HTML {
-	// Simple paragraph rendering - splits on double newlines
-	paragraphs := strings.Split(strings.TrimSpace(content), "\n\n")
+	// Simple markdown-like rendering
+	lines := strings.Split(content, "\n")
 	var sb strings.Builder
-	for _, p := range paragraphs {
-		p = strings.TrimSpace(p)
-		if p == "" {
+	var inCodeBlock bool
+	var inList bool
+	var paragraph []string
+
+	flushParagraph := func() {
+		if len(paragraph) > 0 {
+			text := strings.Join(paragraph, " ")
+			sb.WriteString("<p>")
+			sb.WriteString(template.HTMLEscapeString(text))
+			sb.WriteString("</p>\n")
+			paragraph = nil
+		}
+	}
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Code blocks (4 spaces indent)
+		if strings.HasPrefix(line, "    ") && !inCodeBlock {
+			flushParagraph()
+			if inList {
+				sb.WriteString("</ul>\n")
+				inList = false
+			}
+			sb.WriteString("<pre><code>")
+			inCodeBlock = true
+		}
+		if inCodeBlock {
+			if strings.HasPrefix(line, "    ") {
+				sb.WriteString(template.HTMLEscapeString(strings.TrimPrefix(line, "    ")))
+				sb.WriteString("\n")
+				continue
+			} else {
+				sb.WriteString("</code></pre>\n")
+				inCodeBlock = false
+			}
+		}
+
+		// Empty line
+		if trimmed == "" {
+			flushParagraph()
+			if inList {
+				sb.WriteString("</ul>\n")
+				inList = false
+			}
 			continue
 		}
-		// Replace single newlines with <br>
-		p = strings.ReplaceAll(p, "\n", "<br>")
-		sb.WriteString("<p>")
-		sb.WriteString(template.HTMLEscapeString(p))
-		sb.WriteString("</p>\n")
+
+		// Headers
+		if strings.HasPrefix(trimmed, "## ") {
+			flushParagraph()
+			if inList {
+				sb.WriteString("</ul>\n")
+				inList = false
+			}
+			sb.WriteString("<h2>")
+			sb.WriteString(template.HTMLEscapeString(strings.TrimPrefix(trimmed, "## ")))
+			sb.WriteString("</h2>\n")
+			continue
+		}
+		if strings.HasPrefix(trimmed, "# ") {
+			flushParagraph()
+			if inList {
+				sb.WriteString("</ul>\n")
+				inList = false
+			}
+			sb.WriteString("<h2>")
+			sb.WriteString(template.HTMLEscapeString(strings.TrimPrefix(trimmed, "# ")))
+			sb.WriteString("</h2>\n")
+			continue
+		}
+
+		// List items
+		if strings.HasPrefix(trimmed, "- ") {
+			flushParagraph()
+			if !inList {
+				sb.WriteString("<ul>\n")
+				inList = true
+			}
+			sb.WriteString("<li>")
+			sb.WriteString(template.HTMLEscapeString(strings.TrimPrefix(trimmed, "- ")))
+			sb.WriteString("</li>\n")
+			continue
+		}
+
+		// Bold text **text**
+		paragraph = append(paragraph, trimmed)
 	}
-	return template.HTML(sb.String())
+
+	if inCodeBlock {
+		sb.WriteString("</code></pre>\n")
+	}
+	if inList {
+		sb.WriteString("</ul>\n")
+	}
+	flushParagraph()
+
+	// Process inline formatting
+	result := sb.String()
+	result = processInlineFormatting(result)
+	return template.HTML(result)
+}
+
+func processInlineFormatting(s string) string {
+	// Bold: **text**
+	for {
+		start := strings.Index(s, "**")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(s[start+2:], "**")
+		if end == -1 {
+			break
+		}
+		end += start + 2
+		s = s[:start] + "<strong>" + s[start+2:end] + "</strong>" + s[end+2:]
+	}
+	// Inline code: `text`
+	for {
+		start := strings.Index(s, "`")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(s[start+1:], "`")
+		if end == -1 {
+			break
+		}
+		end += start + 1
+		s = s[:start] + "<code>" + s[start+1:end] + "</code>" + s[end+1:]
+	}
+	return s
 }
