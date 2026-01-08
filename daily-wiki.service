@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily Wikipedia article fetcher
+After=network.target
+
+[Service]
+Type=oneshot
+User=exedev
+Group=exedev
+WorkingDirectory=/home/exedev
+ExecStart=/home/exedev/daily-wiki
+Environment=HOME=/home/exedev
+StandardOutput=journal
+StandardError=journal
